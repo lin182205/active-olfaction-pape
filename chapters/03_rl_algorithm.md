@@ -117,33 +117,455 @@ l_t^π = g_θ(f_t) ∈ ℝ²⁶, V_ϕ(h_t)=g_ϕ(f_t) ∈ ℝ
 
 价值函数 V_ϕ(h_t) 表示从当前历史状态出发、继续按当前策略行动时的期望折扣回报。它并不直接决定动作，而用于构造低方差优势估计并训练 Critic。Actor 则根据优势方向提高“比当前平均水平更好”的动作概率、降低较差动作概率。共享时序特征提取器使嗅觉历史表示同时接受策略损失和价值损失的梯度约束。
 
-## 3.9 PPO 与 GAE 更新
+## 3.9 PPO 算法的理论推导：从策略梯度到近端更新
 
-在一轮 PPO 训练中，首先用当前策略在多个并行环境中收集固定长度 rollout。当前默认并行环境数 N=8、每个环境每轮采集 n_steps=512，因此单轮得到 4096 个环境步。对每个时间步保存观测历史、动作、旧策略 log probability、奖励、终止标记和当时的价值预测。之后计算 TD 残差：
+PPO 并不是一个孤立提出的经验目标，而是沿着“直接优化期望回报—降低梯度估计方差—限制单次策略变化”这条逻辑链逐步得到的。为与本文的 POMDP 建模一致，以下用历史表征 \(h_t\) 代替完全可观测状态 \(s_t\)。若历史编码器能够保留决策所需信息，则后续推导与标准 MDP 中以状态为条件的推导形式相同。策略梯度、GAE 与 PPO 的基本理论分别参考文献[1]—[3]。
 
-δ_t = r_t + γV_ϕ(h\_{t+1}) − V_ϕ(h_t)
+### 3.9.1 从轨迹概率到策略梯度
 
-采用 GAE 对多步 TD 残差进行指数加权，得到优势估计：
+设一条长度为 \(T\) 的交互轨迹为
 
-Â_t = Σ\_{l=0}^{T−t−1}(γλ)^l δ\_{t+l}, γ=0.99, λ=0.95
+$$
+\tau=(h_0,a_0,r_0,h_1,a_1,r_1,\ldots,h_T),
+$$
 
-对应的 Critic 回归目标可写为 R̂\_t=Â_t+V_ϕ(h_t)。这里“优势加价值”不是把 Q 值错误地当作 V 值，而是因为优势定义 A=Q−V，故 A+V 恢复对当前策略回报目标的估计；在实现中它作为 value target 训练 Critic。
+其在参数化随机策略 \(\pi_\theta\) 下的概率可分解为
 
-对 Actor，定义新旧策略在已采样动作上的概率比：
+$$
+p_\theta(\tau)
+=p(h_0)\prod_{t=0}^{T-1}
+\pi_\theta(a_t\mid h_t)\,
+p(h_{t+1}\mid h_t,a_t).
+$$
 
-ρ_t(θ)=π_θ(a_t\|h_t) / π\_{θ_old}(a_t\|h_t)
+环境初始分布与转移规律不依赖策略参数 \(\theta\)，因此 \(\theta\) 只出现在动作概率中。定义折扣轨迹回报
 
-PPO 的裁剪策略目标为：
+$$
+R(\tau)=\sum_{t=0}^{T-1}\gamma^t r_t,
+\qquad
+J(\theta)=\mathbb{E}_{\tau\sim p_\theta}[R(\tau)].
+$$
 
-L_clip(θ)=E_t\[min(ρ_tÂ_t, clip(ρ_t,1−ε,1+ε)Â_t)\], ε=0.2
+直接对 \(J(\theta)\) 求导，并利用对数导数恒等式
+\(\nabla_\theta p_\theta=p_\theta\nabla_\theta\log p_\theta\)，可得
 
-当优势为正时，希望提高该动作概率，但概率比超过 1+ε 后继续增大不再带来目标收益；当优势为负时，希望降低该动作概率，但也限制单轮变化幅度。这样可避免普通策略梯度因一次 minibatch 更新过大而破坏已有策略。当前实现还设置 target KL=0.02，当近似 KL 偏离过大时提前停止当前轮更新，进一步控制策略漂移。
+$$
+\begin{aligned}
+\nabla_\theta J(\theta)
+&=\int \nabla_\theta p_\theta(\tau)R(\tau)\,\mathrm d\tau\\
+&=\mathbb{E}_{\tau\sim p_\theta}
+\left[
+R(\tau)\nabla_\theta\log p_\theta(\tau)
+\right]\\
+&=\mathbb{E}_{\tau\sim p_\theta}
+\left[
+R(\tau)\sum_{t=0}^{T-1}
+\nabla_\theta\log\pi_\theta(a_t\mid h_t)
+\right].
+\end{aligned}
+$$
 
-PPO 同时优化价值函数损失与策略熵正则。总体上可写为最小化形式：
+动作 \(a_t\) 不可能影响 \(t\) 以前已经获得的奖励，因此可依据因果性去掉每个梯度项之前的奖励，只保留从当前时刻开始的 return-to-go。令
 
-L_total = −L_clip + c_v L_value − c_e H\[π_θ(·\|h_t)\]
+$$
+G_t=\sum_{l=0}^{T-t-1}\gamma^l r_{t+l},
+$$
 
-其中 L_value 为 Critic 对 R̂\_t 的回归误差，H 为策略熵。当前训练脚本显式设置 entropy coefficient c_e=0.003，以避免早期策略过快塌缩到少数移动/扇区动作。rollout 数据被划分为 batch_size=256 的 minibatch，每批数据重复更新 n_epochs=5 轮；学习率当前默认为 1×10⁻⁴。
+则在折扣状态访问分布的记号下，策略梯度定理可以写为
+
+$$
+\nabla_\theta J(\theta)
+\propto
+\mathbb{E}_{h_t,a_t\sim\pi_\theta}
+\left[
+\nabla_\theta\log\pi_\theta(a_t\mid h_t)
+Q^{\pi_\theta}(h_t,a_t)
+\right],
+$$
+
+其中
+
+$$
+Q^\pi(h_t,a_t)
+=\mathbb{E}_\pi[G_t\mid h_t,a_t].
+$$
+
+比例常数或外层的 \(\gamma^t\) 权重取决于采用有限时域目标还是归一化折扣访问分布，但不改变梯度上升方向。该结果给出 REINFORCE 形式的无偏 Monte Carlo 估计：
+
+$$
+\widehat g_{\mathrm{MC}}
+=
+\frac{1}{N}\sum_{i=1}^{N}\sum_t
+\nabla_\theta\log\pi_\theta(a_t^{(i)}\mid h_t^{(i)})
+G_t^{(i)}.
+$$
+
+它的直观含义是：若一次采样动作之后获得较大回报，就沿着提高该动作对数概率的方向更新；反之则降低其概率。但 \(G_t\) 同时包含动作效果、场景随机性、羽流随机性和后续动作随机性，因此方差通常很大。
+
+### 3.9.2 基线为何能够降低方差而不引入偏差
+
+可以从 \(Q^\pi(h_t,a_t)\) 中减去任意只依赖 \(h_t\)、不依赖当前动作 \(a_t\) 的基线 \(b(h_t)\)。这是因为
+
+$$
+\begin{aligned}
+&\mathbb{E}_{a_t\sim\pi_\theta}
+\left[
+\nabla_\theta\log\pi_\theta(a_t\mid h_t)b(h_t)
+\right]\\
+&\quad=b(h_t)\sum_a
+\pi_\theta(a\mid h_t)
+\nabla_\theta\log\pi_\theta(a\mid h_t)\\
+&\quad=b(h_t)\sum_a\nabla_\theta\pi_\theta(a\mid h_t)\\
+&\quad=b(h_t)\nabla_\theta\sum_a\pi_\theta(a\mid h_t)=0.
+\end{aligned}
+$$
+
+因此
+
+$$
+\mathbb{E}
+\left[
+\nabla_\theta\log\pi_\theta(a_t\mid h_t)
+\{Q^\pi(h_t,a_t)-b(h_t)\}
+\right]
+$$
+
+与原策略梯度具有相同的期望。减去基线并不是改变优化目标，而是引入控制变量：把所有动作在同一历史状态下共同具有的“场景难易程度”抵消掉，使更新主要由动作相对平均水平的好坏决定。
+
+最常用的基线是状态价值函数
+
+$$
+V^\pi(h_t)
+=\mathbb{E}_{a_t\sim\pi_\theta}
+\left[Q^\pi(h_t,a_t)\right].
+$$
+
+由此定义优势函数
+
+$$
+A^\pi(h_t,a_t)
+=Q^\pi(h_t,a_t)-V^\pi(h_t).
+$$
+
+于是策略梯度写成
+
+$$
+\nabla_\theta J(\theta)
+\propto
+\mathbb{E}
+\left[
+\nabla_\theta\log\pi_\theta(a_t\mid h_t)
+A^\pi(h_t,a_t)
+\right].
+$$
+
+当 \(A^\pi>0\) 时，该动作比当前策略在同一历史状态下的平均动作更好，应提高其概率；当 \(A^\pi<0\) 时，应降低其概率。这正是 Actor–Critic 的分工：Actor 表示 \(\pi_\theta\)，Critic 用 \(V_\phi\) 近似 \(V^\pi\)，再由 Critic 构造比原始回报方差更低的优势估计。需要注意，价值基线只能降低由“状态整体价值差异”造成的波动，\(V_\phi\) 的估计误差仍会进入优势，因此还需要设计合适的时序估计器。
+
+### 3.9.3 从 TD 残差到多步优势估计
+
+若使用一步自举，价值函数的 TD 残差为
+
+$$
+\delta_t^V
+=r_t+\gamma(1-d_t)V_\phi(h_{t+1})-V_\phi(h_t),
+$$
+
+其中 \(d_t=1\) 表示 \(t\) 步之后是真正终止状态，终止时不再自举；若只是因 rollout 长度截断而非环境终止，则仍应从 \(V_\phi(h_{t+1})\) 自举。当 \(V_\phi=V^\pi\) 时，
+
+$$
+\mathbb{E}[\delta_t^V\mid h_t,a_t]
+=A^\pi(h_t,a_t),
+$$
+
+所以一步 TD 残差可以作为优势估计。它只包含一步随机奖励，方差较小，但强烈依赖 Critic 的准确性，因而可能产生较大偏差。
+
+把连续 \(k\) 个 TD 残差按折扣相加，可利用中间价值项的望远镜消去得到 \(k\) 步优势估计：
+
+$$
+\begin{aligned}
+\widehat A_t^{(k)}
+&=\sum_{l=0}^{k-1}\gamma^l\delta_{t+l}^V\\
+&=\sum_{l=0}^{k-1}\gamma^l r_{t+l}
++\gamma^k V_\phi(h_{t+k})
+-V_\phi(h_t).
+\end{aligned}
+$$
+
+当 \(k=1\) 时是低方差、较高自举偏差的一步 TD；当 \(k\) 延伸到 episode 末端时，末端价值为零，它退化为 \(G_t-V_\phi(h_t)\)，即低自举偏差、但高采样方差的 Monte Carlo 优势。由此可见，优势估计的核心矛盾是自举偏差与轨迹采样方差之间的权衡。
+
+### 3.9.4 广义优势估计 GAE 的由来
+
+对 \(0\leq\lambda<1\)，GAE 将所有 \(k\) 步优势估计按几何权重混合[2]；\(\lambda=1\) 则由极限定义：
+
+$$
+\widehat A_t^{\mathrm{GAE}(\gamma,\lambda)}
+=(1-\lambda)\sum_{k=1}^{\infty}
+\lambda^{k-1}\widehat A_t^{(k)}.
+$$
+
+把上一节的 \(\widehat A_t^{(k)}\) 代入并重新整理各 TD 残差的系数，可以得到更常用的等价形式：
+
+$$
+\widehat A_t^{\mathrm{GAE}(\gamma,\lambda)}
+=\sum_{l=0}^{\infty}
+(\gamma\lambda)^l\delta_{t+l}^V.
+$$
+
+有限 rollout 中使用反向递推实现：
+
+$$
+\widehat A_t
+=\delta_t^V
++\gamma\lambda(1-d_t)\widehat A_{t+1}.
+$$
+
+参数 \(\lambda\in[0,1]\) 控制偏差—方差折中：
+
+- \(\lambda=0\) 时，\(\widehat A_t=\delta_t^V\)，主要依赖一步自举，方差小但对价值误差敏感；
+- \(\lambda\rightarrow1\) 时，估计逐渐接近完整 return-to-go 减去价值基线，偏差通常减小而方差增大；
+- 中间取值对远期 TD 残差施加指数衰减，兼顾信用分配长度与训练稳定性。
+
+本文采用 \(\gamma=0.99,\lambda=0.95\)。对于气味源搜索，这意味着短时气味命中、重捕获和动作结果获得较大权重，同时仍把若干步后的到源收益向前传播。用于训练 Critic 的回报目标为
+
+$$
+\widehat R_t
+=\widehat A_t+V_{\phi_{\mathrm{old}}}(h_t),
+$$
+
+并在优化时将该目标视为常量。这里的“优势加旧价值”来源于 \(A=Q-V\)，不是把动作价值与状态价值混为一谈，而是在采样策略和旧 Critic 下重建一个低方差的价值回归目标。
+
+### 3.9.5 从策略梯度到重要性采样代理目标
+
+上述梯度要求样本来自当前策略。然而 PPO 会固定一批由旧策略 \(\pi_{\theta_{\mathrm{old}}}\) 收集的 rollout，并对它进行多个 epoch 的 minibatch 更新；参数第一次更新后，数据分布就不再等于新策略分布。为在旧样本上评价新策略，引入重要性采样概率比
+
+$$
+r_t(\theta)
+=
+\frac{\pi_\theta(a_t\mid h_t)}
+{\pi_{\theta_{\mathrm{old}}}(a_t\mid h_t)}
+=
+\exp\left[
+\log\pi_\theta(a_t\mid h_t)
+-\log\pi_{\theta_{\mathrm{old}}}(a_t\mid h_t)
+\right].
+$$
+
+由于本文的移动、左触须与右触须动作采用条件因子化的 MultiCategorical 分布，
+
+$$
+\pi_\theta(a_t\mid h_t)
+=
+\prod_{j\in\{m,L,R\}}
+\pi_\theta^j(a_t^j\mid h_t),
+$$
+
+故联合动作的对数概率与概率比分别满足
+
+$$
+\log\pi_\theta(a_t\mid h_t)
+=
+\sum_{j\in\{m,L,R\}}
+\log\pi_\theta^j(a_t^j\mid h_t),
+$$
+
+$$
+r_t(\theta)
+=
+\prod_{j\in\{m,L,R\}}
+\frac{\pi_\theta^j(a_t^j\mid h_t)}
+{\pi_{\theta_{\mathrm{old}}}^j(a_t^j\mid h_t)}.
+$$
+
+在旧策略附近，可优化的一阶代理目标为
+
+$$
+L^{\mathrm{PG}}(\theta)
+=
+\mathbb{E}_t
+\left[
+r_t(\theta)\widehat A_t
+\right].
+$$
+
+当 \(\theta=\theta_{\mathrm{old}}\) 时 \(r_t=1\)，该目标的梯度与采样时刻的策略梯度一致。概率比大于 1 表示新策略提高了已采样联合动作的概率，小于 1 表示降低了它的概率。
+
+### 3.9.6 为什么需要信赖域与 KL 散度
+
+若对同一批数据反复、无约束地最大化 \(L^{\mathrm{PG}}\)，策略可能快速远离采样策略。此时会出现两类问题：一是旧策略访问到的历史状态分布不再代表新策略的访问分布；二是有限样本优势中的估计误差会被新策略过度利用。代理目标虽然在 \(\theta_{\mathrm{old}}\) 附近是一阶正确的，但远离该点后不再可靠。
+
+策略改进恒等式揭示了这一问题。对新旧两策略有
+
+$$
+J(\pi)-J(\pi_{\mathrm{old}})
+=
+\frac{1}{1-\gamma}
+\mathbb{E}_{h\sim d_\pi,\;a\sim\pi}
+\left[
+A^{\pi_{\mathrm{old}}}(h,a)
+\right],
+$$
+
+其中 \(d_\pi\) 是新策略诱导的折扣访问分布。实际代理目标使用的是旧分布 \(d_{\pi_{\mathrm{old}}}\)；只有新旧策略足够接近时，二者差异才可控。因此，TRPO 类方法在最大化代理目标的同时限制平均 KL 散度：
+
+$$
+\begin{aligned}
+\max_\theta\quad&
+\mathbb{E}_t[r_t(\theta)\widehat A_t],\\
+\mathrm{s.t.}\quad&
+\mathbb{E}_{h_t\sim d_{\pi_{\mathrm{old}}}}
+\left[
+D_{\mathrm{KL}}
+\left(
+\pi_{\theta_{\mathrm{old}}}(\cdot\mid h_t)
+\;\|\;
+\pi_\theta(\cdot\mid h_t)
+\right)
+\right]
+\leq\delta.
+\end{aligned}
+$$
+
+离散动作分布的 KL 散度定义为
+
+$$
+D_{\mathrm{KL}}(p\|q)
+=
+\sum_a p(a)\log\frac{p(a)}{q(a)}
+\geq0.
+$$
+
+它衡量用 \(q\) 近似 \(p\) 时增加的信息损失，具有非负性，但通常不满足对称性，即
+\(D_{\mathrm{KL}}(p\|q)\neq D_{\mathrm{KL}}(q\|p)\)。本文监控的是旧策略到新策略的方向，因为 rollout 由旧策略采样。对因子化联合策略，条件 KL 可分解为三部分之和：
+
+$$
+D_{\mathrm{KL}}
+\left(
+\pi_{\mathrm{old}}\|\pi_\theta
+\right)
+=
+\sum_{j\in\{m,L,R\}}
+D_{\mathrm{KL}}
+\left(
+\pi_{\mathrm{old}}^j\|\pi_\theta^j
+\right).
+$$
+
+在旧参数附近，平均 KL 可作二阶近似
+
+$$
+\overline D_{\mathrm{KL}}
+\approx
+\frac{1}{2}\Delta\theta^\top
+F(\theta_{\mathrm{old}})
+\Delta\theta,
+$$
+
+其中 \(F\) 是 Fisher 信息矩阵。代理目标作一阶近似为
+\(g^\top\Delta\theta\)，从而得到自然梯度方向
+\(F^{-1}g\)。TRPO 通过二阶近似、共轭梯度和线搜索近似求解约束问题，更新稳定但实现和计算相对复杂。PPO 的目标是在只使用一阶梯度优化的条件下，获得近似的“不要离旧策略太远”的效果[3]。
+
+### 3.9.7 从 KL 惩罚到 PPO-Clip
+
+一种直接做法是在代理目标中加入 KL 惩罚：
+
+$$
+L^{\mathrm{KLPEN}}(\theta)
+=
+\mathbb{E}_t
+\left[
+r_t(\theta)\widehat A_t
+-\beta
+D_{\mathrm{KL}}
+\left(
+\pi_{\mathrm{old}}(\cdot\mid h_t)
+\|\pi_\theta(\cdot\mid h_t)
+\right)
+\right],
+$$
+
+并根据实际 KL 是否超过目标值调节 \(\beta\)。但固定惩罚系数对不同任务和训练阶段未必合适。PPO-Clip 改为直接构造逐样本的保守代理目标：
+
+$$
+L^{\mathrm{CLIP}}(\theta)
+=
+\mathbb{E}_t
+\left[
+\min
+\left(
+r_t(\theta)\widehat A_t,\;
+\operatorname{clip}
+\left(r_t(\theta),1-\epsilon,1+\epsilon\right)
+\widehat A_t
+\right)
+\right].
+$$
+
+其中 \(\epsilon\) 为裁剪范围，本文取 \(\epsilon=0.2\)。该最小值对正、负优势产生不同的单侧限制：
+
+$$
+\ell_t^{\mathrm{CLIP}}
+=
+\begin{cases}
+\min(r_t,1+\epsilon)\widehat A_t,
+& \widehat A_t\geq0,\\[4pt]
+\max(r_t,1-\epsilon)\widehat A_t,
+& \widehat A_t<0.
+\end{cases}
+$$
+
+当 \(\widehat A_t>0\) 时，算法希望提高该动作概率；但 \(r_t>1+\epsilon\) 后，目标被截在
+\((1+\epsilon)\widehat A_t\)，继续提高概率不再获得额外收益。当 \(\widehat A_t<0\) 时，算法希望降低该动作概率；但 \(r_t<1-\epsilon\) 后，目标被截在
+\((1-\epsilon)\widehat A_t\)，继续降低概率也不再改善目标。取两项最小值使裁剪目标成为未裁剪代理收益的悲观估计，从而削弱过度更新的动力。
+
+必须强调，PPO-Clip 并不是把所有概率比强制投影到
+\([1-\epsilon,1+\epsilon]\)，也不等价于严格满足某个 KL 约束。裁剪只在“继续变化会让当前样本目标看起来更好”的方向上移除激励；共享网络参数、其他样本、价值损失和熵项仍可能使个别概率比越界。因此实践中仍需监控 KL 散度。本文设置 \(\mathrm{target\_kl}=0.02\)：若一个 rollout 上多轮更新造成的近似 KL 过大，则提前结束本轮 epoch，以同时使用“局部裁剪”和“整体分布漂移监控”两道稳定机制。
+
+### 3.9.8 Actor、Critic 与熵正则的联合目标
+
+PPO 的 Actor 最大化 \(L^{\mathrm{CLIP}}\)。Critic 以 GAE 构造的
+\(\widehat R_t\) 为监督信号，最小化价值回归损失
+
+$$
+L^{V}(\phi)
+=
+\frac{1}{2}
+\mathbb{E}_t
+\left[
+\left(
+V_\phi(h_t)-\widehat R_t
+\right)^2
+\right].
+$$
+
+为防止训练早期策略分布过快塌缩到少数动作，还加入策略熵
+
+$$
+\mathcal H(\pi_\theta(\cdot\mid h_t))
+=
+-\sum_a
+\pi_\theta(a\mid h_t)
+\log\pi_\theta(a\mid h_t).
+$$
+
+对本文的因子化动作分布，联合熵等于移动、左触须和右触须三个分类分布熵之和。以最小化形式表示，总损失为
+
+$$
+L_{\mathrm{total}}
+=
+-L^{\mathrm{CLIP}}
++c_v L^V
+-c_e\,
+\mathbb{E}_t[
+\mathcal H(\pi_\theta(\cdot\mid h_t))
+].
+$$
+
+其中 \(c_v\) 控制 Critic 回归权重，\(c_e\) 控制探索强度。本文设置
+\(c_e=0.003\)，学习率为 \(1\times10^{-4}\)。每轮由
+\(N=8\) 个并行环境各采集 \(512\) 步，共得到 \(4096\) 个样本；数据划分为
+\(256\) 大小的 minibatch，并最多重复优化 \(5\) 个 epoch。旧策略对数概率、旧价值与 GAE 目标在 rollout 结束后固定，当前网络则在每个 minibatch 上重新计算新对数概率、价值和熵。
+
+综上，PPO 的完整逻辑链为：对期望回报使用对数导数得到策略梯度；用状态价值作为不改变期望梯度的基线形成优势函数；用 GAE 在 Monte Carlo 高方差与 TD 自举偏差之间折中；用重要性采样概率比复用旧策略 rollout；再用 Clip 抑制单样本上的过度概率变化，并以 KL 提前停止监控整体策略漂移。该链条共同解释了 PPO 为何能够在动态羽流、传感器滞后和联合离散动作带来的高噪声条件下保持相对稳定的更新。
 
 ## 3.10 奖励函数设计
 
