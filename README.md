@@ -1,6 +1,6 @@
 # Active Olfaction Paper
 
-本仓库用于维护论文《基于深度强化学习的自适应嗅觉触须设计》的 Markdown 稿件。
+本仓库用于维护论文《面向间歇羽流的双触须主动嗅觉采样与强化学习搜索方法》的 Markdown 稿件。
 
 ## 文件结构
 
@@ -14,7 +14,8 @@
 - `chapters/07_appendices.md`：附录
 - `chapters/08_references.md`：参考文献
 - `chapters/09_todo.md`：后续补充清单
-- `paper_full.md`：由 Word 初稿转换得到的完整 Markdown 版本
+- `paper_full.md`：由各章节按顺序合并得到的完整 Markdown 版本
+- `scripts/build_paper_full.py`：重建完整稿，章节文件是正文的唯一来源
 
 ## 分支策略
 
@@ -57,7 +58,13 @@ git merge main
 ## 写作约定
 
 1. 不在没有实验数据的情况下补写虚构结果；保留 `【待补】` 标记。
-2. 数学公式优先使用 Markdown/LaTeX 语法。
+2. 数学公式使用 GitHub 可渲染的 LaTeX：行内公式写作 `$...$`，独立公式写作 `$$...$$`；不要用裸下划线或转义下划线表示上下标。
 3. 术语首次出现时给出中英文与缩写，后文保持一致。
 4. 对算法、奖励函数和仿真参数的修改，应同步核对 `dual-whisker-rl` 项目代码。
 5. 最终投稿前再统一处理图表编号、交叉引用、参考文献格式和 Word/LaTeX 排版。
+
+修改章节后运行以下命令同步完整稿：
+
+```bash
+python scripts/build_paper_full.py
+```
