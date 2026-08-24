@@ -10,12 +10,14 @@
 | 底盘        | forward_speed          | 0.15 m/s       |
 | 底盘        | turn_rate              | 1.5 rad/s      |
 | 环境        | dt                     | 0.2 s          |
-| 触须        | length                 | 0.3 m          |
+| 触须        | length                 | 0.15 m         |
 | 触须        | sector_count           | 10/侧          |
 | 触须        | servo_60deg_time       | 0.12 s         |
 | 传感器      | sensor_model           | asymmetric     |
 | 传感器      | response/recovery tau  | 0.6 / 3.0 s    |
 | 传感器      | noise_std              | 0.006          |
+| 仿真预处理  | scale / dt_s           | 0.35 / 0.2 s   |
+| 硬件预处理  | scale（阶段暂定）      | 1500 ADC       |
 | 观测        | single-frame dim       | 16             |
 | 观测        | history length         | 20             |
 | 时序        | default encoder        | GRU            |
@@ -35,6 +37,9 @@
 
 | **论文内容**                 | **主要代码文件**                                              |
 |------------------------------|---------------------------------------------------------------|
+| 固定基座主动采样环境         | dual_whisker_rl/envs/whisker_only_env.py                      |
+| 固定/周期/随机/主动采样评估  | scripts/evaluate_whisker_sampling_policies.py                 |
+| 真实硬件采样模式对比         | scripts/compare_hardware_sampling_modes.py                    |
 | 移动机器人联合搜索环境       | dual_whisker_rl/envs/mobile_whisker_env.py                    |
 | 动态 puff 羽流与基础触须环境 | dual_whisker_rl/envs/whisker_only_env.py                      |
 | 底盘离散动力学               | dual_whisker_rl/envs/robot_model.py                           |
