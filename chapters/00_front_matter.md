@@ -27,7 +27,22 @@
 | PPO           | Proximal Policy Optimization，近端策略优化                               |
 | GAE           | Generalized Advantage Estimation，广义优势估计                           |
 | A–C           | Actor–Critic，策略网络—价值网络结构                                      |
-| H             | 历史观测窗口长度，当前训练脚本默认 H=20                                  |
+| $s_t$         | $t$ 时刻不可完全观测的环境状态                                           |
+| $o_t$         | $t$ 时刻智能体可获得的单帧观测                                           |
+| $\mathcal H_t$ | 截至 $t$ 时刻的有限观测历史，$\mathcal H_t=(o_{t-H+1},\ldots,o_t)$      |
+| $a_t$         | $t$ 时刻的联合动作                                                       |
+| $r_t$         | 执行 $a_t$ 后获得的即时奖励                                               |
+| $\pi_\theta$ | 参数为 $\theta$ 的策略                                                   |
+| $v_\pi$      | 策略 $\pi$ 下的状态价值函数；$v_\phi$ 表示 Critic 的参数化近似           |
+| $q_\pi$      | 策略 $\pi$ 下的动作价值函数                                             |
+| $A_\pi$      | 策略 $\pi$ 下的优势函数；$\widehat A_t$ 表示样本优势估计                 |
+| $\rho_t(\theta)$ | PPO 中新策略相对旧策略的动作概率比                                   |
+| $\delta_t$   | TD 残差                                                               |
+| $\widehat R_t$ | 由 GAE 优势和旧价值构造的 Critic 回归目标                            |
+| $\iota_t$    | 真实终止指示量；终止时取1，否则取0                                    |
+| $H$           | 历史观测窗口长度，当前训练脚本默认 $H=20$                                |
+| $\boldsymbol\chi_t$ | 机器人位姿向量 $[x_t,y_t,\psi_t]^{\mathsf T}$                    |
+| $u,\omega$   | 机器人线速度与角速度                                                   |
 | $d_t$         | 机器人在 $t$ 时刻到气源的欧氏距离，仅用于训练奖励和评估                  |
 | $c_t^L,c_t^R$ | 左右触须位置处经传感器动态后的读数                                       |
 | $b_t$         | 失嗅持续时间（blank age）                                                |
