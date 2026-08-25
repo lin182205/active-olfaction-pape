@@ -576,7 +576,7 @@ PPO 的 Actor 最大化 $L^{\mathrm{CLIP}}$。Critic 以 GAE 构造的
 $\widehat R_t$ 为监督信号，最小化价值回归损失
 
 $$
-L^{v}(\phi)
+L_v(\phi)
 =
 \frac{1}{2}
 \mathbb{E}_t
@@ -603,7 +603,7 @@ $$
 L_{\mathrm{total}}
 =
 -L^{\mathrm{CLIP}}
-+c_v L^v
++c_v L_v
 -c_e\,
 \mathbb{E}_t[
 \operatorname{Ent}[\pi_\theta(\cdot\mid \mathcal H_t)]
