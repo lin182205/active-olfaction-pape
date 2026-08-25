@@ -2,7 +2,7 @@
 
 ## 3.1 部分可观测决策建模
 
-由于智能体无法观测完整羽流状态、瞬时风场和真实气源位置，同时气体传感器输出还具有内部动态记忆，因此更准确地说，本任务属于部分可观测马尔可夫决策过程。记隐藏环境状态为 $s_t$，其中包含机器人真实位姿、气源位置、全部 puff 状态、风场状态以及传感器内部状态；智能体实际获得观测 $o_t=\Omega(s_t)$，并依据有限历史 $h_t=(o_{t-H+1},\ldots,o_t)$ 选择动作 $a_t$。目标是学习参数化策略 $\pi_\theta(a_t\mid h_t)$，最大化折扣累积回报：
+由于智能体无法观测完整羽流状态、瞬时风场和真实气源位置，同时气体传感器输出还具有内部动态记忆，因此更准确地说，本任务属于部分可观测马尔可夫决策过程。记隐藏环境状态为 $s_t$，其中包含机器人真实位姿、气源位置、全部 puff 状态、风场状态以及传感器内部状态；智能体实际获得观测 $o_t=\Omega(s_t)$，并依据有限历史 $\mathcal H_t=(o_{t-H+1},\ldots,o_t)$ 选择动作 $a_t$。目标是学习参数化策略 $\pi_\theta(a_t\mid \mathcal H_t)$，最大化折扣累积回报：
 
 $$
 J(\theta)=\mathbb E_{\pi_\theta}\!\left[\sum_{t=0}^{T-1}\gamma^t r_t\right]
@@ -39,15 +39,15 @@ puff 中心随平均风输运，同时叠加具有时间相关性的随机速度
 
 ## 3.3 差速机器人运动模型
 
-机器人采用六动作离散近似：前进、左转前进、右转前进、原地左旋、原地右旋和停止。设线速度 $v$、角速度 $\omega$、步长 $\Delta t$，前进动作可写为：
+机器人采用六动作离散近似：前进、左转前进、右转前进、原地左旋、原地右旋和停止。为避免与价值函数符号 $v_\pi$ 混淆，记线速度为 $u$、角速度为 $\omega$、步长为 $\Delta t$，前进动作可写为：
 
 $$
-x_{t+1}=x_t+v\Delta t\cos\psi_t,\qquad
-y_{t+1}=y_t+v\Delta t\sin\psi_t,\qquad
+x_{t+1}=x_t+u\Delta t\cos\psi_t,\qquad
+y_{t+1}=y_t+u\Delta t\sin\psi_t,\qquad
 \psi_{t+1}=\psi_t
 $$
 
-左/右转动作先改变航向 $\pm\omega\Delta t$，再以 $0.5v\Delta t$ 的距离沿新航向移动；原地旋转只改变航向；停止动作保持位姿不变。当前移动环境默认 $v=0.15\ \mathrm{m/s}$、$\omega=1.5\ \mathrm{rad/s}$、$\Delta t=0.2\ \mathrm{s}$，因此一次完整前进约移动 $0.03\ \mathrm{m}$，一次旋转约改变 $0.30\ \mathrm{rad}$（约17°）。这种离散动作既降低策略输出维度，又容易映射到底盘速度指令。
+左/右转动作先改变航向 $\pm\omega\Delta t$，再以 $0.5u\Delta t$ 的距离沿新航向移动；原地旋转只改变航向；停止动作保持位姿不变。当前移动环境默认 $u=0.15\ \mathrm{m/s}$、$\omega=1.5\ \mathrm{rad/s}$、$\Delta t=0.2\ \mathrm{s}$，因此一次完整前进约移动 $0.03\ \mathrm{m}$，一次旋转约改变 $0.30\ \mathrm{rad}$（约17°）。这种离散动作既降低策略输出维度，又容易映射到底盘速度指令。
 
 ## 3.4 非对称气体传感器动态
 
@@ -102,9 +102,9 @@ $$
 其中 $a_t^m$ 为 6 类底盘移动动作，$a_t^L$ 与 $a_t^R$ 分别为左、右触须扇区。若把所有组合完全展开，共有 $6\times10\times10=600$ 种联合组合，但实现中使用 `MultiDiscrete([6,10,10])`，而不是建立一个 600 类单一离散动作。PPO 的 MultiCategorical 策略对三部分输出分别产生分类分布，在共享状态表示条件下其联合概率可写为：
 
 $$
-\pi_\theta(a_t\mid h_t)=\pi_\theta^m(a_t^m\mid h_t)\,
-\pi_\theta^L(a_t^L\mid h_t)\,
-\pi_\theta^R(a_t^R\mid h_t)
+\pi_\theta(a_t\mid \mathcal H_t)=\pi_\theta^m(a_t^m\mid \mathcal H_t)\,
+\pi_\theta^L(a_t^L\mid \mathcal H_t)\,
+\pi_\theta^R(a_t^R\mid \mathcal H_t)
 $$
 
 因此，网络最后只需要输出 6+10+10=26 个 logits，再按三组进行 softmax。该因子化既保留左右触须的独立选择能力，又避免直接对 600 个组合输出分类概率所带来的参数冗余。需要指出的是，三类动作并非物理独立：它们共享同一时序状态表征，并通过共同回报联合训练，所以策略仍能够学习“某种本体动作应配合某种触须姿态”的协同关系。
@@ -154,7 +154,7 @@ $$
 
 ## 3.8 Actor–Critic 网络结构
 
-经 MLP/GRU/Transformer 获得时序特征 $f_t$ 后，PPO 使用 Actor–Critic 结构同时学习策略和状态价值[1,3]。当前策略配置共享同一个时序特征提取器，之后 Actor 与 Critic 进入各自的两层全连接网络，每层 160 个隐藏单元。Actor 最终输出 26 个 logits，分别对应移动6类、左触须10类和右触须10类；Critic 输出单个标量 $V_\phi(h_t)$。
+经 MLP/GRU/Transformer 获得时序特征 $f_t$ 后，PPO 使用 Actor–Critic 结构同时学习策略和状态价值[1,3]。当前策略配置共享同一个时序特征提取器，之后 Actor 与 Critic 进入各自的两层全连接网络，每层 160 个隐藏单元。Actor 最终输出 26 个 logits，分别对应移动6类、左触须10类和右触须10类；Critic 输出单个标量 $v_\phi(\mathcal H_t)$。
 
 $$
 f_t=F_\omega(o_{t-H+1:t})
@@ -162,30 +162,30 @@ $$
 
 $$
 \ell_t^\pi=g_\theta(f_t)\in\mathbb R^{26},\qquad
-V_\phi(h_t)=g_\phi(f_t)\in\mathbb R
+v_\phi(\mathcal H_t)=g_\phi(f_t)\in\mathbb R
 $$
 
-价值函数 $V_\phi(h_t)$ 表示从当前历史状态出发、继续按当前策略行动时的期望折扣回报。它并不直接决定动作，而用于构造低方差优势估计并训练 Critic。Actor 则根据优势方向提高“比当前平均水平更好”的动作概率、降低较差动作概率。共享时序特征提取器使嗅觉历史表示同时接受策略损失和价值损失的梯度约束。
+价值函数 $v_\phi(\mathcal H_t)$ 表示从当前观测历史出发、继续按当前策略行动时的期望折扣回报。它并不直接决定动作，而用于构造低方差优势估计并训练 Critic。Actor 则根据优势方向提高“比当前平均水平更好”的动作概率、降低较差动作概率。共享时序特征提取器使嗅觉历史表示同时接受策略损失和价值损失的梯度约束。
 
 ## 3.9 PPO 算法的理论推导：从策略梯度到近端更新
 
-PPO 并不是一个孤立提出的经验目标，而是沿着“直接优化期望回报—降低梯度估计方差—限制单次策略变化”这条逻辑链逐步得到的。为与本文的 POMDP 建模一致，以下用历史表征 $h_t$ 代替完全可观测状态 $s_t$。若历史编码器能够保留决策所需信息，则后续推导与标准 MDP 中以状态为条件的推导形式相同。策略梯度、GAE 与 PPO 的基本理论分别参考文献[1]—[3]。
+PPO 并不是一个孤立提出的经验目标，而是沿着“直接优化期望回报—降低梯度估计方差—限制单次策略变化”这条逻辑链逐步得到的。为与本文的 POMDP 建模一致，以下用观测历史 $\mathcal H_t$ 代替完全可观测状态 $s_t$。若历史编码器能够保留决策所需信息，则后续推导与标准 MDP 中以状态为条件的推导形式相同。策略梯度、GAE 与 PPO 的基本理论分别参考文献[1]—[3]。
 
 ### 3.9.1 从轨迹概率到策略梯度
 
 设一条长度为 $T$ 的交互轨迹为
 
 $$
-\tau=(h_0,a_0,r_0,h_1,a_1,r_1,\ldots,h_T),
+\tau=(\mathcal H_0,a_0,r_0,\mathcal H_1,a_1,r_1,\ldots,\mathcal H_T),
 $$
 
 其在参数化随机策略 $\pi_\theta$ 下的概率可分解为
 
 $$
 p_\theta(\tau)
-=p(h_0)\prod_{t=0}^{T-1}
-\pi_\theta(a_t\mid h_t)\,
-p(h_{t+1}\mid h_t,a_t).
+=p(\mathcal H_0)\prod_{t=0}^{T-1}
+\pi_\theta(a_t\mid \mathcal H_t)\,
+p(\mathcal H_{t+1}\mid \mathcal H_t,a_t).
 $$
 
 环境初始分布与转移规律不依赖策略参数 $\theta$，因此 $\theta$ 只出现在动作概率中。定义折扣轨迹回报
@@ -210,7 +210,7 @@ R(\tau)\nabla_\theta\log p_\theta(\tau)
 &=\mathbb{E}_{\tau\sim p_\theta}
 \left[
 R(\tau)\sum_{t=0}^{T-1}
-\nabla_\theta\log\pi_\theta(a_t\mid h_t)
+\nabla_\theta\log\pi_\theta(a_t\mid \mathcal H_t)
 \right].
 \end{aligned}
 $$
@@ -226,18 +226,18 @@ $$
 $$
 \nabla_\theta J(\theta)
 \propto
-\mathbb{E}_{h_t,a_t\sim\pi_\theta}
+\mathbb{E}_{\mathcal H_t,a_t\sim\pi_\theta}
 \left[
-\nabla_\theta\log\pi_\theta(a_t\mid h_t)
-Q^{\pi_\theta}(h_t,a_t)
+\nabla_\theta\log\pi_\theta(a_t\mid \mathcal H_t)
+q_{\pi_\theta}(\mathcal H_t,a_t)
 \right],
 $$
 
 其中
 
 $$
-Q^\pi(h_t,a_t)
-=\mathbb{E}_\pi[G_t\mid h_t,a_t].
+q_\pi(\mathcal H_t,a_t)
+=\mathbb{E}_\pi[G_t\mid \mathcal H_t,a_t].
 $$
 
 比例常数或外层的 $\gamma^t$ 权重取决于采用有限时域目标还是归一化折扣访问分布，但不改变梯度上升方向。该结果给出 REINFORCE 形式的无偏 Monte Carlo 估计：
@@ -246,7 +246,7 @@ $$
 \widehat g_{\mathrm{MC}}
 =
 \frac{1}{N}\sum_{i=1}^{N}\sum_t
-\nabla_\theta\log\pi_\theta(a_t^{(i)}\mid h_t^{(i)})
+\nabla_\theta\log\pi_\theta(a_t^{(i)}\mid \mathcal H_t^{(i)})
 G_t^{(i)}.
 $$
 
@@ -254,19 +254,19 @@ $$
 
 ### 3.9.2 基线为何能够降低方差而不引入偏差
 
-可以从 $Q^\pi(h_t,a_t)$ 中减去任意只依赖 $h_t$、不依赖当前动作 $a_t$ 的基线 $b(h_t)$。这是因为
+可以从 $q_\pi(\mathcal H_t,a_t)$ 中减去任意只依赖 $\mathcal H_t$、不依赖当前动作 $a_t$ 的基线 $\beta(\mathcal H_t)$。这是因为
 
 $$
 \begin{aligned}
 &\mathbb{E}_{a_t\sim\pi_\theta}
 \left[
-\nabla_\theta\log\pi_\theta(a_t\mid h_t)b(h_t)
+\nabla_\theta\log\pi_\theta(a_t\mid \mathcal H_t)\beta(\mathcal H_t)
 \right]\\
-&\quad=b(h_t)\sum_a
-\pi_\theta(a\mid h_t)
-\nabla_\theta\log\pi_\theta(a\mid h_t)\\
-&\quad=b(h_t)\sum_a\nabla_\theta\pi_\theta(a\mid h_t)\\
-&\quad=b(h_t)\nabla_\theta\sum_a\pi_\theta(a\mid h_t)=0.
+&\quad=\beta(\mathcal H_t)\sum_a
+\pi_\theta(a\mid \mathcal H_t)
+\nabla_\theta\log\pi_\theta(a\mid \mathcal H_t)\\
+&\quad=\beta(\mathcal H_t)\sum_a\nabla_\theta\pi_\theta(a\mid \mathcal H_t)\\
+&\quad=\beta(\mathcal H_t)\nabla_\theta\sum_a\pi_\theta(a\mid \mathcal H_t)=0.
 \end{aligned}
 $$
 
@@ -275,8 +275,8 @@ $$
 $$
 \mathbb{E}
 \left[
-\nabla_\theta\log\pi_\theta(a_t\mid h_t)
-\{Q^\pi(h_t,a_t)-b(h_t)\}
+\nabla_\theta\log\pi_\theta(a_t\mid \mathcal H_t)
+\{q_\pi(\mathcal H_t,a_t)-\beta(\mathcal H_t)\}
 \right]
 $$
 
@@ -285,16 +285,16 @@ $$
 最常用的基线是状态价值函数
 
 $$
-V^\pi(h_t)
+v_\pi(\mathcal H_t)
 =\mathbb{E}_{a_t\sim\pi_\theta}
-\left[Q^\pi(h_t,a_t)\right].
+\left[q_\pi(\mathcal H_t,a_t)\right].
 $$
 
 由此定义优势函数
 
 $$
-A^\pi(h_t,a_t)
-=Q^\pi(h_t,a_t)-V^\pi(h_t).
+A_\pi(\mathcal H_t,a_t)
+=q_\pi(\mathcal H_t,a_t)-v_\pi(\mathcal H_t).
 $$
 
 于是策略梯度写成
@@ -304,27 +304,27 @@ $$
 \propto
 \mathbb{E}
 \left[
-\nabla_\theta\log\pi_\theta(a_t\mid h_t)
-A^\pi(h_t,a_t)
+\nabla_\theta\log\pi_\theta(a_t\mid \mathcal H_t)
+A_\pi(\mathcal H_t,a_t)
 \right].
 $$
 
-当 $A^\pi>0$ 时，该动作比当前策略在同一历史状态下的平均动作更好，应提高其概率；当 $A^\pi<0$ 时，应降低其概率。这正是 Actor–Critic 的分工：Actor 表示 $\pi_\theta$，Critic 用 $V_\phi$ 近似 $V^\pi$，再由 Critic 构造比原始回报方差更低的优势估计。需要注意，价值基线只能降低由“状态整体价值差异”造成的波动，$V_\phi$ 的估计误差仍会进入优势，因此还需要设计合适的时序估计器。
+当 $A_\pi>0$ 时，该动作比当前策略在同一观测历史下的平均动作更好，应提高其概率；当 $A_\pi<0$ 时，应降低其概率。这正是 Actor–Critic 的分工：Actor 表示 $\pi_\theta$，Critic 用 $v_\phi$ 近似 $v_\pi$，再由 Critic 构造比原始回报方差更低的优势估计。需要注意，价值基线只能降低由“历史整体价值差异”造成的波动，$v_\phi$ 的估计误差仍会进入优势，因此还需要设计合适的时序估计器。
 
 ### 3.9.3 从 TD 残差到多步优势估计
 
 若使用一步自举，价值函数的 TD 残差为
 
 $$
-\delta_t^V
-=r_t+\gamma(1-d_t)V_\phi(h_{t+1})-V_\phi(h_t),
+\delta_t
+=r_t+\gamma(1-\iota_t)v_\phi(\mathcal H_{t+1})-v_\phi(\mathcal H_t),
 $$
 
-其中 $d_t=1$ 表示 $t$ 步之后是真正终止状态，终止时不再自举；若只是因 rollout 长度截断而非环境终止，则仍应从 $V_\phi(h_{t+1})$ 自举。当 $V_\phi=V^\pi$ 时，
+其中终止指示量 $\iota_t\in\{0,1\}$；$\iota_t=1$ 表示 $t$ 步之后是真正终止状态，终止时不再自举。若只是因 rollout 长度截断而非环境终止，则仍应从 $v_\phi(\mathcal H_{t+1})$ 自举。当 $v_\phi=v_\pi$ 时，
 
 $$
-\mathbb{E}[\delta_t^V\mid h_t,a_t]
-=A^\pi(h_t,a_t),
+\mathbb{E}[\delta_t\mid \mathcal H_t,a_t]
+=A_\pi(\mathcal H_t,a_t),
 $$
 
 所以一步 TD 残差可以作为优势估计。它只包含一步随机奖励，方差较小，但强烈依赖 Critic 的准确性，因而可能产生较大偏差。
@@ -334,14 +334,14 @@ $$
 $$
 \begin{aligned}
 \widehat A_t^{(k)}
-&=\sum_{l=0}^{k-1}\gamma^l\delta_{t+l}^V\\
+&=\sum_{l=0}^{k-1}\gamma^l\delta_{t+l}\\
 &=\sum_{l=0}^{k-1}\gamma^l r_{t+l}
-+\gamma^k V_\phi(h_{t+k})
--V_\phi(h_t).
++\gamma^k v_\phi(\mathcal H_{t+k})
+-v_\phi(\mathcal H_t).
 \end{aligned}
 $$
 
-当 $k=1$ 时是低方差、较高自举偏差的一步 TD；当 $k$ 延伸到 episode 末端时，末端价值为零，它退化为 $G_t-V_\phi(h_t)$，即低自举偏差、但高采样方差的 Monte Carlo 优势。由此可见，优势估计的核心矛盾是自举偏差与轨迹采样方差之间的权衡。
+当 $k=1$ 时是低方差、较高自举偏差的一步 TD；当 $k$ 延伸到 episode 末端时，末端价值为零，它退化为 $G_t-v_\phi(\mathcal H_t)$，即低自举偏差、但高采样方差的 Monte Carlo 优势。由此可见，优势估计的核心矛盾是自举偏差与轨迹采样方差之间的权衡。
 
 ### 3.9.4 广义优势估计 GAE 的由来
 
@@ -358,20 +358,20 @@ $$
 $$
 \widehat A_t^{\mathrm{GAE}(\gamma,\lambda)}
 =\sum_{l=0}^{\infty}
-(\gamma\lambda)^l\delta_{t+l}^V.
+(\gamma\lambda)^l\delta_{t+l}.
 $$
 
 有限 rollout 中使用反向递推实现：
 
 $$
 \widehat A_t
-=\delta_t^V
-+\gamma\lambda(1-d_t)\widehat A_{t+1}.
+=\delta_t
++\gamma\lambda(1-\iota_t)\widehat A_{t+1}.
 $$
 
 参数 $\lambda\in[0,1]$ 控制偏差—方差折中：
 
-- $\lambda=0$ 时，$\widehat A_t=\delta_t^V$，主要依赖一步自举，方差小但对价值误差敏感；
+- $\lambda=0$ 时，$\widehat A_t=\delta_t$，主要依赖一步自举，方差小但对价值误差敏感；
 - $\lambda\rightarrow1$ 时，估计逐渐接近完整 return-to-go 减去价值基线，偏差通常减小而方差增大；
 - 中间取值对远期 TD 残差施加指数衰减，兼顾信用分配长度与训练稳定性。
 
@@ -379,51 +379,51 @@ $$
 
 $$
 \widehat R_t
-=\widehat A_t+V_{\phi_{\mathrm{old}}}(h_t),
+=\widehat A_t+v_{\phi_{\mathrm{old}}}(\mathcal H_t),
 $$
 
-并在优化时将该目标视为常量。这里的“优势加旧价值”来源于 $A=Q-V$，不是把动作价值与状态价值混为一谈，而是在采样策略和旧 Critic 下重建一个低方差的价值回归目标。
+并在优化时将该目标视为常量。这里的“优势加旧价值”来源于 $A_\pi=q_\pi-v_\pi$，不是把动作价值与状态价值混为一谈，而是在采样策略和旧 Critic 下重建一个低方差的价值回归目标。
 
 ### 3.9.5 从策略梯度到重要性采样代理目标
 
 上述梯度要求样本来自当前策略。然而 PPO 会固定一批由旧策略 $\pi_{\theta_{\mathrm{old}}}$ 收集的 rollout，并对它进行多个 epoch 的 minibatch 更新；参数第一次更新后，数据分布就不再等于新策略分布。为在旧样本上评价新策略，引入重要性采样概率比
 
 $$
-r_t(\theta)
+\rho_t(\theta)
 =
-\frac{\pi_\theta(a_t\mid h_t)}
-{\pi_{\theta_{\mathrm{old}}}(a_t\mid h_t)}
+\frac{\pi_\theta(a_t\mid \mathcal H_t)}
+{\pi_{\theta_{\mathrm{old}}}(a_t\mid \mathcal H_t)}
 =
 \exp\left[
-\log\pi_\theta(a_t\mid h_t)
--\log\pi_{\theta_{\mathrm{old}}}(a_t\mid h_t)
+\log\pi_\theta(a_t\mid \mathcal H_t)
+-\log\pi_{\theta_{\mathrm{old}}}(a_t\mid \mathcal H_t)
 \right].
 $$
 
 由于本文的移动、左触须与右触须动作采用条件因子化的 MultiCategorical 分布，
 
 $$
-\pi_\theta(a_t\mid h_t)
+\pi_\theta(a_t\mid \mathcal H_t)
 =
 \prod_{j\in\{m,L,R\}}
-\pi_\theta^j(a_t^j\mid h_t),
+\pi_\theta^j(a_t^j\mid \mathcal H_t),
 $$
 
 故联合动作的对数概率与概率比分别满足
 
 $$
-\log\pi_\theta(a_t\mid h_t)
+\log\pi_\theta(a_t\mid \mathcal H_t)
 =
 \sum_{j\in\{m,L,R\}}
-\log\pi_\theta^j(a_t^j\mid h_t),
+\log\pi_\theta^j(a_t^j\mid \mathcal H_t),
 $$
 
 $$
-r_t(\theta)
+\rho_t(\theta)
 =
 \prod_{j\in\{m,L,R\}}
-\frac{\pi_\theta^j(a_t^j\mid h_t)}
-{\pi_{\theta_{\mathrm{old}}}^j(a_t^j\mid h_t)}.
+\frac{\pi_\theta^j(a_t^j\mid \mathcal H_t)}
+{\pi_{\theta_{\mathrm{old}}}^j(a_t^j\mid \mathcal H_t)}.
 $$
 
 在旧策略附近，可优化的一阶代理目标为
@@ -433,11 +433,11 @@ L^{\mathrm{PG}}(\theta)
 =
 \mathbb{E}_t
 \left[
-r_t(\theta)\widehat A_t
+\rho_t(\theta)\widehat A_t
 \right].
 $$
 
-当 $\theta=\theta_{\mathrm{old}}$ 时 $r_t=1$，该目标的梯度与采样时刻的策略梯度一致。概率比大于 1 表示新策略提高了已采样联合动作的概率，小于 1 表示降低了它的概率。
+当 $\theta=\theta_{\mathrm{old}}$ 时 $\rho_t(\theta)=1$，该目标的梯度与采样时刻的策略梯度一致。概率比大于 1 表示新策略提高了已采样联合动作的概率，小于 1 表示降低了它的概率。采用 $\rho_t$ 而不是 $r_t$ 表示概率比，可避免与即时奖励 $r_t$ 混淆。
 
 ### 3.9.6 为什么需要信赖域与 KL 散度
 
@@ -446,57 +446,57 @@ $$
 策略改进恒等式揭示了这一问题。对新旧两策略有
 
 $$
-J(\pi)-J(\pi_{\mathrm{old}})
+J(\pi_\theta)-J(\pi_{\theta_{\mathrm{old}}})
 =
 \frac{1}{1-\gamma}
-\mathbb{E}_{h\sim d_\pi,\;a\sim\pi}
+\mathbb{E}_{\mathcal H\sim d_{\pi_\theta},\;a\sim\pi_\theta}
 \left[
-A^{\pi_{\mathrm{old}}}(h,a)
+A_{\pi_{\theta_{\mathrm{old}}}}(\mathcal H,a)
 \right],
 $$
 
-其中 $d_\pi$ 是新策略诱导的折扣访问分布。实际代理目标使用的是旧分布 $d_{\pi_{\mathrm{old}}}$；只有新旧策略足够接近时，二者差异才可控。因此，TRPO 类方法在最大化代理目标的同时限制平均 KL 散度：
+其中 $d_{\pi_\theta}$ 是新策略诱导的折扣访问分布。实际代理目标使用的是旧分布 $d_{\pi_{\theta_{\mathrm{old}}}}$；只有新旧策略足够接近时，二者差异才可控。因此，TRPO 类方法在最大化代理目标的同时限制平均 KL 散度：
 
 $$
 \begin{aligned}
 \max_\theta\quad&
-\mathbb{E}_t[r_t(\theta)\widehat A_t],\\
+\mathbb{E}_t[\rho_t(\theta)\widehat A_t],\\
 \mathrm{s.t.}\quad&
-\mathbb{E}_{h_t\sim d_{\pi_{\mathrm{old}}}}
+\mathbb{E}_{\mathcal H_t\sim d_{\pi_{\theta_{\mathrm{old}}}}}
 \left[
 D_{\mathrm{KL}}
 \left(
-\pi_{\theta_{\mathrm{old}}}(\cdot\mid h_t)
+\pi_{\theta_{\mathrm{old}}}(\cdot\mid \mathcal H_t)
 \;\|\;
-\pi_\theta(\cdot\mid h_t)
+\pi_\theta(\cdot\mid \mathcal H_t)
 \right)
 \right]
-\leq\delta.
+\leq\delta_{\mathrm{KL}}.
 \end{aligned}
 $$
 
 离散动作分布的 KL 散度定义为
 
 $$
-D_{\mathrm{KL}}(p\|q)
+D_{\mathrm{KL}}(\mu\|\nu)
 =
-\sum_a p(a)\log\frac{p(a)}{q(a)}
+\sum_a \mu(a)\log\frac{\mu(a)}{\nu(a)}
 \geq0.
 $$
 
-它衡量用 $q$ 近似 $p$ 时增加的信息损失，具有非负性，但通常不满足对称性，即
-$D_{\mathrm{KL}}(p\|q)\neq D_{\mathrm{KL}}(q\|p)$。本文监控的是旧策略到新策略的方向，因为 rollout 由旧策略采样。对因子化联合策略，条件 KL 可分解为三部分之和：
+它衡量用分布 $\nu$ 近似分布 $\mu$ 时增加的信息损失，具有非负性，但通常不满足对称性，即
+$D_{\mathrm{KL}}(\mu\|\nu)\neq D_{\mathrm{KL}}(\nu\|\mu)$。本文监控的是旧策略到新策略的方向，因为 rollout 由旧策略采样。对因子化联合策略，条件 KL 可分解为三部分之和：
 
 $$
 D_{\mathrm{KL}}
 \left(
-\pi_{\mathrm{old}}\|\pi_\theta
+\pi_{\theta_{\mathrm{old}}}\|\pi_\theta
 \right)
 =
 \sum_{j\in\{m,L,R\}}
 D_{\mathrm{KL}}
 \left(
-\pi_{\mathrm{old}}^j\|\pi_\theta^j
+\pi_{\theta_{\mathrm{old}}}^j\|\pi_\theta^j
 \right).
 $$
 
@@ -523,17 +523,17 @@ L^{\mathrm{KLPEN}}(\theta)
 =
 \mathbb{E}_t
 \left[
-r_t(\theta)\widehat A_t
--\beta
+\rho_t(\theta)\widehat A_t
+-\kappa_{\mathrm{KL}}
 D_{\mathrm{KL}}
 \left(
-\pi_{\mathrm{old}}(\cdot\mid h_t)
-\|\pi_\theta(\cdot\mid h_t)
+\pi_{\theta_{\mathrm{old}}}(\cdot\mid \mathcal H_t)
+\|\pi_\theta(\cdot\mid \mathcal H_t)
 \right)
 \right],
 $$
 
-并根据实际 KL 是否超过目标值调节 $\beta$。但固定惩罚系数对不同任务和训练阶段未必合适。PPO-Clip 改为直接构造逐样本的保守代理目标：
+并根据实际 KL 是否超过目标值调节 $\kappa_{\mathrm{KL}}$。但固定惩罚系数对不同任务和训练阶段未必合适。PPO-Clip 改为直接构造逐样本的保守代理目标：
 
 $$
 L^{\mathrm{CLIP}}(\theta)
@@ -542,9 +542,9 @@ L^{\mathrm{CLIP}}(\theta)
 \left[
 \min
 \left(
-r_t(\theta)\widehat A_t,\;
+\rho_t(\theta)\widehat A_t,\;
 \operatorname{clip}
-\left(r_t(\theta),1-\epsilon,1+\epsilon\right)
+\left(\rho_t(\theta),1-\epsilon,1+\epsilon\right)
 \widehat A_t
 \right)
 \right].
@@ -556,15 +556,15 @@ $$
 \ell_t^{\mathrm{CLIP}}
 =
 \begin{cases}
-\min(r_t,1+\epsilon)\widehat A_t,
+\min(\rho_t,1+\epsilon)\widehat A_t,
 & \widehat A_t\geq0,\\[4pt]
-\max(r_t,1-\epsilon)\widehat A_t,
+\max(\rho_t,1-\epsilon)\widehat A_t,
 & \widehat A_t<0.
 \end{cases}
 $$
 
-当 $\widehat A_t>0$ 时，算法希望提高该动作概率；但 $r_t>1+\epsilon$ 后，目标被截在
-$(1+\epsilon)\widehat A_t$，继续提高概率不再获得额外收益。当 $\widehat A_t<0$ 时，算法希望降低该动作概率；但 $r_t<1-\epsilon$ 后，目标被截在
+当 $\widehat A_t>0$ 时，算法希望提高该动作概率；但 $\rho_t>1+\epsilon$ 后，目标被截在
+$(1+\epsilon)\widehat A_t$，继续提高概率不再获得额外收益。当 $\widehat A_t<0$ 时，算法希望降低该动作概率；但 $\rho_t<1-\epsilon$ 后，目标被截在
 $(1-\epsilon)\widehat A_t$，继续降低概率也不再改善目标。取两项最小值使裁剪目标成为未裁剪代理收益的悲观估计，从而削弱过度更新的动力。
 
 必须强调，PPO-Clip 并不是把所有概率比强制投影到
@@ -576,13 +576,13 @@ PPO 的 Actor 最大化 $L^{\mathrm{CLIP}}$。Critic 以 GAE 构造的
 $\widehat R_t$ 为监督信号，最小化价值回归损失
 
 $$
-L^{V}(\phi)
+L^{v}(\phi)
 =
 \frac{1}{2}
 \mathbb{E}_t
 \left[
 \left(
-V_\phi(h_t)-\widehat R_t
+v_\phi(\mathcal H_t)-\widehat R_t
 \right)^2
 \right].
 $$
@@ -590,11 +590,11 @@ $$
 为防止训练早期策略分布过快塌缩到少数动作，还加入策略熵
 
 $$
-\mathcal H(\pi_\theta(\cdot\mid h_t))
+\operatorname{Ent}[\pi_\theta(\cdot\mid \mathcal H_t)]
 =
 -\sum_a
-\pi_\theta(a\mid h_t)
-\log\pi_\theta(a\mid h_t).
+\pi_\theta(a\mid \mathcal H_t)
+\log\pi_\theta(a\mid \mathcal H_t).
 $$
 
 对本文的因子化动作分布，联合熵等于移动、左触须和右触须三个分类分布熵之和。以最小化形式表示，总损失为
@@ -603,10 +603,10 @@ $$
 L_{\mathrm{total}}
 =
 -L^{\mathrm{CLIP}}
-+c_v L^V
++c_v L^v
 -c_e\,
 \mathbb{E}_t[
-\mathcal H(\pi_\theta(\cdot\mid h_t))
+\operatorname{Ent}[\pi_\theta(\cdot\mid \mathcal H_t)]
 ].
 $$
 
@@ -622,7 +622,7 @@ $256$ 大小的 minibatch，并最多重复优化 $5$ 个 epoch。旧策略对�
 奖励函数是本项目从“能够训练”走向“学习正确搜索行为”的关键。早期直觉式奖励容易把瞬时浓度、气味命中或左右差直接作为每步正奖励，但这种设计存在明显投机空间：机器人可能在一个局部高浓度点原地旋转、停止或重复扫描，从而持续获得正回报，而不需要真正接近气源。当前移动环境因此将奖励重构为七个分量。该奖励服务于移动找源训练；固定基座实验使用独立的信息指标评价，不能用下式的距离项或到源奖励比较扫描方式。
 
 $$
-r_t=r_t^d+r_t^c+r_t^q+r_t^{\mathrm{time}}+r_t^{\mathrm{stag}}+r_t^{\mathrm{goal}}+r_t^{\mathrm{oob}}
+r_t=r_t^d+r_t^c+r_t^{\mathrm{reacq}}+r_t^{\mathrm{time}}+r_t^{\mathrm{stag}}+r_t^{\mathrm{goal}}+r_t^{\mathrm{oob}}
 $$
 
 ### 3.10.1 距离差分奖励
@@ -654,12 +654,12 @@ $$
 为了让主动触须本身具有可学习的价值，环境显式记录失嗅状态。若此前已经出现过气味命中，随后连续失嗅超过最短时间 $b_{\min}$，并在某一步重新命中，则定义一次 qualified reacquisition。根据最近一个 credit window 内是否发生底盘运动和触须运动，将重捕获进一步分为：底盘辅助重捕获、纯触须重捕获和被动重捕获。只有“近期无底盘运动、但触须发生运动并最终重捕获”的纯触须事件获得额外奖励：
 
 $$
-r_t^q=
+r_t^{\mathrm{reacq}}=
 \begin{cases}
-k_q,& \text{whisker-only reacquisition},\\
+k_{\mathrm{reacq}},& \text{whisker-only reacquisition},\\
 0,& \text{otherwise},
 \end{cases}
-\qquad k_q=0.25
+\qquad k_{\mathrm{reacq}}=0.25
 $$
 
 当前每个 episode 最多奖励4次纯触须重捕获，最短失嗅时间为1.0 s，动作归因窗口为1.0 s。设置次数上限是为了防止策略故意反复制造“失嗅—重捕获”循环来刷取辅助奖励。该奖励既服务于性能，也为论文提供了可解释指标：可以单独统计纯触须、底盘辅助和被动重捕获占比，判断主动触须到底是否真正承担了信息恢复作用。
@@ -696,7 +696,7 @@ $$
 
 > 1\. 初始化 $N$ 个随机场景环境。每个环境独立采样平均风向、气源位置、下风侧机器人初始位置和初始朝向，重置 puff、传感器动态、在线预处理器、触须状态以及 $H$ 帧历史缓存。
 >
-> 2\. 在每个环境步，历史窗口经 GRU/Transformer/MLP 编码为 $f_t$；Actor 生成移动、左触须和右触须三个分类分布并采样联合动作；Critic 同时给出 $V(h_t)$。
+> 2\. 在每个环境步，历史窗口经 GRU/Transformer/MLP 编码为 $f_t$；Actor 生成移动、左触须和右触须三个分类分布并采样联合动作；Critic 同时给出 $v_\phi(\mathcal H_t)$。
 >
 > 3\. 环境执行底盘动作与受速度限制的触须动作，推进动态羽流，在两个触须端点计算真实浓度并经过非对称传感器动态，再通过在线预处理得到下一帧硬件观测。
 >
