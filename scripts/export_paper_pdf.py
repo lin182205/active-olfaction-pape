@@ -359,6 +359,23 @@ def tex_to_markup(tex: str) -> str:
     tex = tex.strip()
     tex = replace_braced_command(tex, r"\frac", 2)
     tex = replace_braced_command(tex, r"\sqrt", 1)
+    for command, accent_markup in (
+        (r"\widehat", "^{^}"),
+        (r"\widetilde", "^{~}"),
+        (r"\overline", "^{-}"),
+    ):
+        tex = re.sub(
+            re.escape(command) + r"\{([^{}]+)\}",
+            lambda match, markup=accent_markup: match.group(1) + markup,
+            tex,
+        )
+        tex = re.sub(
+            re.escape(command) + r"\s*([A-Za-z])",
+            lambda match, markup=accent_markup: match.group(1) + markup,
+            tex,
+        )
+    tex = re.sub(r"\\le(?![A-Za-z])", "≤", tex)
+    tex = re.sub(r"\\ge(?![A-Za-z])", "≥", tex)
     replacements = {
         r"\mathbb{R}": "ℝ",
         r"\mathbb E": "E",
@@ -389,12 +406,18 @@ def tex_to_markup(tex: str) -> str:
         r"\delta": "δ",
         r"\epsilon": "ε",
         r"\varepsilon": "ε",
+        r"\eta": "η",
+        r"\iota": "ι",
+        r"\kappa": "κ",
         r"\lambda": "λ",
         r"\mu": "μ",
+        r"\nu": "ν",
         r"\pi": "π",
         r"\rho": "ρ",
         r"\sigma": "σ",
         r"\tau": "τ",
+        r"\chi": "χ",
+        r"\xi": "ξ",
         r"\Delta": "Δ",
         r"\Omega": "Ω",
         r"\sum": "Σ",
@@ -407,6 +430,7 @@ def tex_to_markup(tex: str) -> str:
         r"\approx": "≈",
         r"\propto": "∝",
         r"\rightarrow": "→",
+        r"\leftarrow": "←",
         r"\times": "×",
         r"\cdot": "·",
         r"\odot": "⊙",
