@@ -72,19 +72,19 @@
 
 环境执行一步动作时，首先解码 $[a_t^m,a_t^L,a_t^R]$，推进差速机器人位姿和动态 puff 羽流，再根据受速度限制后的左右触须位置计算原始浓度。原始浓度经响应快、恢复慢的传感器模型得到 $c_t^L,c_t^R$，随后由与硬件端共用的 `WhiskerObservationBuilder` 生成12维嗅觉与触须几何特征，再拼接航向 $\cos\psi_t,\sin\psi_t$、上一移动动作和归一化 blank age，形成16维 $o_t$。这一顺序意味着策略看不到生成奖励所用的真实气源距离、真实风向或 puff 内部状态；这些仿真特权量只留在环境端计算奖励和评估指标。
 
-`ObservationHistoryWrapper` 将最近 $H=20$ 帧按从旧到新的顺序连接。因此，每个环境返回给 PPO 的输入维数为
+`ObservationHistoryWrapper` 将最近 $H=20$ 帧按从旧到新的顺序连接，得到观测历史 $\mathcal H_t=(o_{t-H+1},\ldots,o_t)$。因此，每个环境返回给 PPO 的输入维数为
 
 $$
 d_{\mathrm{in}}=H d_o=20\times16=320.
 $$
 
-episode 重置时用第一帧观测填满整个历史队列，后续每一步丢弃最旧帧并加入新帧。默认 GRU 提取器在网络内部把扁平输入恢复为
+episode 重置时用第一帧观测填满整个历史队列，后续每一步丢弃最旧帧并加入新帧。将 $\mathcal H_t$ 在 minibatch 中恢复时间维后的张量记为 $X_t$，则默认 GRU 提取器的输入为
 
 $$
 X_t\in\mathbb{R}^{B\times20\times16},
 $$
 
-经单层、隐藏维64的 GRU 后取最后一层最终隐状态，再通过 `Linear+GELU` 得到64维时序特征 $f_t$。`share_features_extractor=True` 表示同一个 $f_t=F_\omega(X_t)$ 同时送入 Actor 和 Critic；之后二者分别经过 $[160,160]$ 的全连接分支，并沿用 SB3 `MlpPolicy` 默认的 Tanh 激活。Actor 产生26个 logits，对应移动6类、左触须10类和右触须10类，Critic 输出标量 $V_\phi(h_t)$。
+经单层、隐藏维64的 GRU 后取最后一层最终隐状态，再通过 `Linear+GELU` 得到64维时序特征 $f_t$。`share_features_extractor=True` 表示同一个 $f_t=F_\omega(X_t)$ 同时送入 Actor 和 Critic；之后二者分别经过 $[160,160]$ 的全连接分支，并沿用 SB3 `MlpPolicy` 默认的 Tanh 激活。Actor 产生26个 logits，对应移动6类、左触须10类和右触须10类，Critic 输出标量 $v_\phi(\mathcal H_t)$。
 
 表4-3 单个训练样本在项目中的主要数据形状
 
@@ -98,26 +98,26 @@ $$
 | Critic输出 | $[B,1]$ | 历史状态价值估计 |
 | 联合动作 | $[B,3]$ | 移动、左扇区、右扇区 |
 
-在 rollout 阶段，策略依据三个分类分布采样联合动作，并把以下数据写入 on-policy buffer：历史观测、动作、即时奖励、episode 边界标记、旧策略对该联合动作的对数概率 $\log\pi_{\mathrm{old}}(a_t\mid h_t)$ 以及采样时的旧价值 $V_{\mathrm{old}}(h_t)$。三个动作分量的联合对数概率是各分类对数概率之和。每个环境连续收集512步，8个环境合并后得到4096个时序样本；这些样本只服务于紧接着的一轮 PPO 更新，更新结束后即被新的 on-policy rollout 替换，而不是像 DQN 一样长期存入经验回放池。
+在 rollout 阶段，策略依据三个分类分布采样联合动作，并把以下数据写入 on-policy buffer：观测历史、动作、即时奖励、episode 边界标记、旧策略对该联合动作的对数概率 $\log\pi_{\theta_{\mathrm{old}}}(a_t\mid \mathcal H_t)$ 以及采样时的旧价值 $v_{\phi_{\mathrm{old}}}(\mathcal H_t)$。三个动作分量的联合对数概率是各分类对数概率之和。每个环境连续收集512步，8个环境合并后得到4096个时序样本；这些样本只服务于紧接着的一轮 PPO 更新，更新结束后即被新的 on-policy rollout 替换，而不是像 DQN 一样长期存入经验回放池。
 
 ### 4.4.2 从奖励序列生成优势与价值目标
 
-rollout 结束后，算法沿时间反向计算 TD 残差。令 $d_t$ 表示真实终止掩码，则
+rollout 结束后，算法沿时间反向计算 TD 残差。令 $\iota_t\in\{0,1\}$ 表示真实终止指示量，则
 
 $$
-\delta_t=r_t+\gamma(1-d_t)V_{\mathrm{old}}(h_{t+1})-V_{\mathrm{old}}(h_t).
+\delta_t=r_t+\gamma(1-\iota_t)v_{\phi_{\mathrm{old}}}(\mathcal H_{t+1})-v_{\phi_{\mathrm{old}}}(\mathcal H_t).
 $$
 
 当前项目固定 $\gamma=0.99$、$\lambda=0.95$，采用 GAE 递推
 
 $$
-\widehat A_t=\delta_t+\gamma\lambda(1-d_t)\widehat A_{t+1},
+\widehat A_t=\delta_t+\gamma\lambda(1-\iota_t)\widehat A_{t+1},
 $$
 
 并构造 Critic 的监督目标
 
 $$
-\widehat R_t=\widehat A_t+V_{\mathrm{old}}(h_t).
+\widehat R_t=\widehat A_t+v_{\phi_{\mathrm{old}}}(\mathcal H_t).
 $$
 
 这里的奖励 $r_t$ 已经是距离差分、历史最佳浓度增量、纯触须重捕获、时间成本、停滞惩罚、到源奖励和越界惩罚七项之和。因此，任一奖励分量都会先改变 $r_t$，再通过 GAE 向此前若干动作传播，最终同时影响 Actor 的优势方向和 Critic 的回归目标。奖励系数虽然不接受梯度更新，却会直接缩放和改变网络收到的训练信号；这也是奖励优化不能只看总回报、而必须同时检查各分量与行为指标的原因。
@@ -137,7 +137,7 @@ $$
 4096个样本被打乱后按 `batch_size=256` 划分，因此每个 epoch 有16个 minibatch。对一个 minibatch，当前网络重新计算新策略对已采样动作的对数概率、当前价值和策略熵：
 
 $$
-(\log\pi_\theta(a_t\mid h_t),V_\phi(h_t),\mathcal H_t)
+(\log\pi_\theta(a_t\mid \mathcal H_t),v_\phi(\mathcal H_t),\operatorname{Ent}_t)
 =\operatorname{EvaluateActions}(X_t,a_t).
 $$
 
@@ -146,21 +146,21 @@ $$
 $$
 \rho_t(\theta)=
 \exp\left[
-\log\pi_\theta(a_t\mid h_t)
--\log\pi_{\mathrm{old}}(a_t\mid h_t)
+\log\pi_\theta(a_t\mid \mathcal H_t)
+-\log\pi_{\theta_{\mathrm{old}}}(a_t\mid \mathcal H_t)
 \right].
 $$
 
 Actor 使用 PPO-Clip 的策略误差。由于训练代码执行梯度下降，实际最小化的是最大化目标的相反数：
 
 $$
-L_{\mathrm{policy}}
+L_\pi
 =-
 \mathbb E_t
 \left[
 \min\left(
-\rho_t\widetilde A_t,
-\operatorname{clip}(\rho_t,0.8,1.2)\widetilde A_t
+\rho_t(\theta)\widetilde A_t,
+\operatorname{clip}(\rho_t(\theta),0.8,1.2)\widetilde A_t
 \right)
 \right].
 $$
@@ -168,27 +168,27 @@ $$
 当更新方向试图把有利动作的概率提高到裁剪区间之外，或把不利动作的概率降低到区间之外时，裁剪分支在该方向不再提供额外改进梯度，从而抑制一次更新过大。Critic 使用 GAE 回报目标的均方误差：
 
 $$
-L_{\mathrm{value}}
+L_v
 =\mathbb E_t
 \left[
-\left(V_\phi(h_t)-\widehat R_t\right)^2
+\left(v_\phi(\mathcal H_t)-\widehat R_t\right)^2
 \right].
 $$
 
 训练脚本没有设置 `clip_range_vf`，因此当前实现使用 SB3 默认的“不裁剪价值预测”方式。策略熵误差写为
 
 $$
-L_{\mathrm{entropy}}
-=-\mathbb E_t[\mathcal H(\pi_\theta(\cdot\mid h_t))].
+L_{\mathrm{ent}}
+=-\mathbb E_t[\operatorname{Ent}[\pi_\theta(\cdot\mid \mathcal H_t)]].
 $$
 
-熵越大，$L_{\mathrm{entropy}}$ 越小；以正系数加入总误差后，梯度下降会保留一定随机探索。训练脚本未显式覆盖 `vf_coef`，因此采用 SB3 默认值0.5。结合项目显式设置的 `ent_coef=0.003`，实际总误差为
+熵越大，$L_{\mathrm{ent}}$ 越小；以正系数加入总误差后，梯度下降会保留一定随机探索。训练脚本未显式覆盖 `vf_coef`，因此采用 SB3 默认值0.5。结合项目显式设置的 `ent_coef=0.003`，实际总误差为
 
 $$
 L_{\mathrm{total}}
-=L_{\mathrm{policy}}
-+0.5L_{\mathrm{value}}
-+0.003L_{\mathrm{entropy}}.
+=L_\pi
++0.5L_v
++0.003L_{\mathrm{ent}}.
 $$
 
 三项误差作用不同：策略误差决定哪些联合动作应更可能出现；价值误差提高 Critic 对未来折扣回报的预测精度，从而改善下一轮优势估计；熵误差延缓三个分类分布过早塌缩。只看 `train/loss` 的总和无法判断是哪一部分出了问题，因此项目同时记录 policy gradient loss、value loss、entropy loss、explained variance、approximate KL 和 clip fraction。
@@ -209,8 +209,8 @@ $$
 $$
 X_t\rightarrow F_\omega\rightarrow
 \begin{cases}
-g_\theta^\pi\rightarrow\log\pi_\theta,\mathcal H\rightarrow L_{\mathrm{policy}},L_{\mathrm{entropy}},\\
-g_\phi^V\rightarrow V_\phi\rightarrow L_{\mathrm{value}}.
+g_\theta^\pi\rightarrow\log\pi_\theta,\operatorname{Ent}\rightarrow L_\pi,L_{\mathrm{ent}},\\
+g_\phi^v\rightarrow v_\phi\rightarrow L_v.
 \end{cases}
 $$
 
@@ -234,15 +234,15 @@ m_k=\beta_1m_{k-1}+(1-\beta_1)g_k,
 $$
 
 $$
-v_k=\beta_2v_{k-1}+(1-\beta_2)g_k^2,
+n_k=\beta_2n_{k-1}+(1-\beta_2)g_k^2,
 $$
 
 $$
-w_{k+1}=w_k-\alpha
-\frac{\widehat m_k}{\sqrt{\widehat v_k}+\varepsilon_{\mathrm{Adam}}},
+w_{k+1}=w_k-\eta
+\frac{\widehat m_k}{\sqrt{\widehat n_k}+\varepsilon_{\mathrm{Adam}}},
 $$
 
-其中 $\alpha=10^{-4}$ 是当前学习率，$\widehat m_k,\widehat v_k$ 为偏差校正后的一、二阶矩估计。学习率决定整体步长，Adam 的二阶矩则按参数历史梯度尺度进行自适应缩放。这里的参数更新不穿过环境：环境输出的观测、奖励和终止信号在 rollout buffer 中均作为常量，反向传播只穿过当前 PyTorch 策略网络。
+其中 $\eta=10^{-4}$ 是当前学习率，$\widehat m_k,\widehat n_k$ 为偏差校正后的一、二阶矩估计。学习率决定整体步长，Adam 的二阶矩则按参数历史梯度尺度进行自适应缩放。这里将二阶矩记为 $n_k$，以避免与价值函数 $v_\pi$ 混淆。参数更新不穿过环境：环境输出的观测、奖励和终止信号在 rollout buffer 中均作为常量，反向传播只穿过当前 PyTorch 策略网络。
 
 ### 4.4.6 多轮样本复用、KL早停与下一轮采样
 
@@ -256,8 +256,8 @@ $$
 
 $$
 \Delta\log\pi_t
-=\log\pi_\theta(a_t\mid h_t)
--\log\pi_{\mathrm{old}}(a_t\mid h_t),
+=\log\pi_\theta(a_t\mid \mathcal H_t)
+-\log\pi_{\theta_{\mathrm{old}}}(a_t\mid \mathcal H_t),
 $$
 
 $$
@@ -294,7 +294,7 @@ $$
 >
 > 4\. 对终止奖励和辅助奖励设置尺度约束，并计算越界惩罚最小安全值，确保最终优化目标仍然是到达气源。
 
-正式优化时，建议首先固定 goal bonus=50 和安全约束，仅在有限范围内调节 $k_d$、$k_c$、$k_q$、时间成本与停滞窗口。判断一个奖励版本是否更好，不能只看训练回报，因为回报本身正是被修改的目标。应同时看成功率、最终/最小到源距离、路径长度、stationary action ratio、blank body spin ratio 和 whisker-only reacquisition rate。若回报上升但成功率不升、stationary ratio 明显增加，通常意味着出现了新的奖励投机。
+正式优化时，建议首先固定 goal bonus=50 和安全约束，仅在有限范围内调节 $k_d$、$k_c$、$k_{\mathrm{reacq}}$、时间成本与停滞窗口。判断一个奖励版本是否更好，不能只看训练回报，因为回报本身正是被修改的目标。应同时看成功率、最终/最小到源距离、路径长度、stationary action ratio、blank body spin ratio 和 whisker-only reacquisition rate。若回报上升但成功率不升、stationary ratio 明显增加，通常意味着出现了新的奖励投机。
 
 ## 4.6 观测值的优化
 
