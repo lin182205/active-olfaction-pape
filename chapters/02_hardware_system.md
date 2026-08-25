@@ -8,7 +8,7 @@
 
 ## 2.2 双触须几何与执行机构设计
 
-左右触须分别覆盖机器人本体左侧和右侧的 180° 半平面。设每侧触须长度为 $l$，机器人位姿为 $\boldsymbol q_t=[x_t,y_t,\psi_t]$，左、右触须相对机器人航向的角度分别为 $\varphi_t^L$ 与 $\varphi_t^R$，则两个采样点的全局坐标为：
+左右触须分别覆盖机器人本体左侧和右侧的 180° 半平面。设每侧触须长度为 $l$，机器人位姿为 $\boldsymbol \chi_t=[x_t,y_t,\psi_t]^{\mathsf T}$，左、右触须相对机器人航向的角度分别为 $\varphi_t^L$ 与 $\varphi_t^R$，则两个采样点的全局坐标为：
 
 $$
 \boldsymbol p_t^L = [x_t + l\cos(\psi_t + \varphi_t^L),\ y_t + l\sin(\psi_t + \varphi_t^L)]^\mathsf{T}
@@ -28,17 +28,17 @@ $$
 
 【待补：使用标准乙醇/目标气体浓度，在固定温湿度条件下记录两只 MQ-3 的稳态 ADC、响应时间、恢复时间和重复性，给出浓度—ADC 标定曲线、R²、个体差异与误差范围。】
 
-在线预处理首先维护缓慢变化的基线 $B_t$，并计算相对信号 $s_t=x_t-B_t$。之后使用指数滑动平均抑制高频噪声：
+在线预处理首先维护缓慢变化的基线 $B_t$，并由原始读数 $x_t$ 计算相对信号 $\widetilde x_t=x_t-B_t$。之后使用指数滑动平均抑制高频噪声，记平滑信号为 $\overline x_t$：
 
 $$
 \alpha_s=\exp\!\left(-\frac{\Delta t}{\tau_s}\right),\qquad
-z_t=\alpha_s z_{t-1}+(1-\alpha_s)s_t
+\overline x_t=\alpha_s\overline x_{t-1}+(1-\alpha_s)\widetilde x_t
 $$
 
 其中 $\Delta t$ 为采样周期，$\tau_s$ 为平滑时间常数。当前预处理默认 $\tau_s=2\ \mathrm{s}$。为了表达“最近在上升还是下降”，在长度为 $W$ 的平滑历史窗口内计算平均每步趋势：
 
 $$
-g_t=\frac{z_t-z_{t-W+1}}{W-1}
+g_t=\frac{\overline x_t-\overline x_{t-W+1}}{W-1}
 $$
 
 为了缓解不同传感器幅值和不同上电基线造成的尺度差异，对信号、平滑量和趋势按尺度 S 归一化并进行裁剪：
