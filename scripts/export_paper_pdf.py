@@ -17,6 +17,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
+    Image as RLImage,
+    KeepTogether,
     ListFlowable,
     ListItem,
     LongTable,
@@ -587,6 +589,28 @@ def make_toc(styles: dict[str, ParagraphStyle]) -> TableOfContents:
     return toc
 
 
+def make_figure_image(target: str, content_width: float) -> RLImage:
+    """读取仓库内的 Markdown 图片，并按正文版心等比缩放。"""
+    relative = Path(target.strip())
+    if relative.is_absolute():
+        raise ValueError(f"论文图片必须使用仓库内相对路径: {target}")
+    image_path = (ROOT / relative).resolve()
+    if ROOT.resolve() not in image_path.parents:
+        raise ValueError(f"论文图片超出仓库范围: {target}")
+    if not image_path.exists():
+        raise FileNotFoundError(f"论文图片不存在: {image_path}")
+
+    image = RLImage(str(image_path))
+    max_height = 11.8 * cm
+    scale = min(content_width / image.imageWidth, max_height / image.imageHeight, 1.0)
+    image.drawWidth = image.imageWidth * scale
+    image.drawHeight = image.imageHeight * scale
+    image.hAlign = "CENTER"
+    image.spaceBefore = 5
+    image.spaceAfter = 3
+    return image
+
+
 def markdown_story(text: str, styles: dict[str, ParagraphStyle], content_width: float):
     lines = text.splitlines()
     story = []
@@ -628,6 +652,27 @@ def markdown_story(text: str, styles: dict[str, ParagraphStyle], content_width: 
             level = len(heading.group(1))
             story.append(Paragraph(inline_markup(heading.group(2)), styles[f"h{level}"]))
             index += 1
+            continue
+
+        image_match = re.fullmatch(r"!\[([^\]]*)\]\(([^)]+)\)", stripped)
+        if image_match:
+            image = make_figure_image(image_match.group(2), content_width)
+            caption_index = index + 1
+            while caption_index < len(lines) and not lines[caption_index].strip():
+                caption_index += 1
+            if (
+                caption_index < len(lines)
+                and re.match(r"^图\d+[-－]\d+\s", lines[caption_index].strip())
+            ):
+                caption = Paragraph(
+                    inline_markup(lines[caption_index].strip()),
+                    styles["caption"],
+                )
+                story.append(KeepTogether([image, caption]))
+                index = caption_index + 1
+            else:
+                story.append(image)
+                index += 1
             continue
 
         if stripped.startswith("|"):
@@ -717,7 +762,11 @@ def markdown_story(text: str, styles: dict[str, ParagraphStyle], content_width: 
             paragraph_lines.append(candidate)
             index += 1
         paragraph_text = " ".join(paragraph_lines)
-        paragraph_style = styles["caption"] if re.match(r"^表\d+[-－]\d+\s", paragraph_text) else styles["body"]
+        paragraph_style = (
+            styles["caption"]
+            if re.match(r"^[图表]\d+[-－]\d+\s", paragraph_text)
+            else styles["body"]
+        )
         story.append(Paragraph(inline_markup(paragraph_text), paragraph_style))
 
     return story

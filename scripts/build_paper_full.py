@@ -15,7 +15,12 @@ def main() -> None:
     if not chapter_paths:
         raise RuntimeError(f"未找到章节文件: {CHAPTERS_DIR}")
 
-    sections = [path.read_text(encoding="utf-8").strip() for path in chapter_paths]
+    sections = []
+    for path in chapter_paths:
+        section = path.read_text(encoding="utf-8").strip()
+        # 章节文件位于 chapters/，合订稿位于仓库根目录；重写本地图路径以保持可解析。
+        section = section.replace("](../figures/", "](figures/")
+        sections.append(section)
     OUTPUT.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
     print(f"已合并 {len(chapter_paths)} 个章节 -> {OUTPUT.name}")
 

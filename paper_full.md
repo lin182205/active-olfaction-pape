@@ -349,7 +349,11 @@ $$
 
 ## 3.8 Actor–Critic 网络结构
 
-经 MLP/GRU/Transformer 获得时序特征 $f_t$ 后，PPO 使用 Actor–Critic 结构同时学习策略和状态价值[1,3]。当前策略配置共享同一个时序特征提取器，之后 Actor 与 Critic 进入各自的两层全连接网络，每层 160 个隐藏单元。Actor 最终输出 26 个 logits，分别对应移动6类、左触须10类和右触须10类；Critic 输出单个标量 $v_\phi(\mathcal H_t)$。
+经 MLP/GRU/Transformer 获得时序特征 $f_t$ 后，PPO 使用 Actor–Critic 结构同时学习策略和状态价值[1,3]。当前策略配置共享同一个时序特征提取器，之后 Actor 与 Critic 进入各自的两层全连接网络，每层 160 个隐藏单元。Actor 最终输出 26 个 logits，分别对应移动6类、左触须10类和右触须10类；Critic 输出单个标量 $v_\phi(\mathcal H_t)$。从硬件可重建观测历史到策略与价值输出的完整信息流如图3-1所示。
+
+![双触须主动嗅觉 PPO 时序 Actor–Critic 网络架构](figures/chapter03/figure_3_1_network_architecture.png)
+
+图3-1 双触须主动嗅觉 PPO 的时序 Actor–Critic 网络架构。长度为 $H=20$ 的观测历史由每帧16维硬件可重建特征组成，不包含真实风向、气源位置或到源距离。历史编码器可在扁平 MLP、GRU 和 Transformer 之间切换，当前默认 GRU 将序列压缩为64维共享特征 $f_t$；Actor 与 Critic 随后分别经过两层160单元全连接网络。Actor 的26个 logits 被拆分为移动6类、左触须10类和右触须10类三个分类分布，Critic 输出状态价值 $v_\phi(\mathcal H_t)$。琥珀色虚线路径表示 rollout、GAE 与 PPO 联合目标对共享编码器及两条分支的训练期梯度更新，不属于部署时的前向推理路径。
 
 $$
 f_t=F_\omega(o_{t-H+1:t})
